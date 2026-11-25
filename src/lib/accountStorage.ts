@@ -36,7 +36,13 @@ function emitAccountChange(keys: string[], source: AccountChange['source']) {
 }
 
 function emitSyncStatus(status: 'saving' | 'saved' | 'error') {
-  window.dispatchEvent(new CustomEvent('dnd-sync-status', { detail: status }))
+  window.dispatchEvent(new CustomEvent('dnd-sync-status', { detail: { status } }))
+}
+
+function emitSyncError(error: unknown) {
+  const message = error instanceof Error ? error.message : String(error)
+  console.error('Dice & Dragons: account sync failed', error)
+  window.dispatchEvent(new CustomEvent('dnd-sync-status', { detail: { status: 'error', message } }))
 }
 
 async function persist(key: string, value: string | null) {
@@ -67,9 +73,9 @@ async function sendPendingWrites(): Promise<boolean> {
       clearTimeout(retryTimer)
       emitSyncStatus('saved')
       return true
-    } catch {
+    } catch (error) {
       for (const [key, value] of batch) if (!pendingWrites.has(key)) pendingWrites.set(key, value)
-      emitSyncStatus('error')
+      emitSyncError(error)
       clearTimeout(retryTimer)
       retryTimer = setTimeout(() => { void sendPendingWrites() }, retryDelay)
       retryDelay = Math.min(30000, retryDelay * 2)
@@ -164,8 +170,8 @@ async function pullAccountData() {
     }
     emitAccountChange(changedKeys, 'remote')
     if (pendingWrites.size === 0) emitSyncStatus('saved')
-  } catch {
-    emitSyncStatus('error')
+  } catch (error) {
+    emitSyncError(error)
   } finally {
     syncInFlight = false
   }

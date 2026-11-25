@@ -8,6 +8,8 @@ import {
 import NpcWorkshop from './NpcWorkshop'
 import { writeAccountValue, removeAccountValue, useAccountDataSync, emptyAccountSyncList } from '../lib/accountStorage'
 import { useAuth } from '../auth/AuthContext'
+import { createSharedGame, uploadMedia } from '../lib/sharedSessions'
+import MediaImage from '../components/MediaImage'
 
 type Section = 'Главная' | 'Мои кампании' | 'Игровые карты' | 'Бестиарий' | 'NPC' | 'Создать кампанию' | 'Настройки' | 'Сессии'
 type Campaign = { id: string; name: string; description: string; system: string; createdAt: string }
@@ -32,7 +34,7 @@ const secondaryButton = 'inline-flex items-center justify-center gap-2 rounded-x
 
 function MasterDashboard() {
   const navigate = useNavigate()
-  const { user, signOut, syncStatus } = useAuth()
+  const { user, signOut, syncStatus, syncError } = useAuth()
   const [activeSection, setActiveSection] = useState<Section>('Главная')
   const [campaigns, setCampaigns] = useState<Campaign[]>(() => readStorage('dnd-campaigns', []))
   const [sessions, setSessions] = useState<Session[]>(() => readStorage('dnd-sessions', []))
@@ -94,21 +96,28 @@ function MasterDashboard() {
 
   const addSession = () => { if (!activeCampaign) { setActiveSection('Создать кампанию'); return } setSessions((current) => [...current, { id: makeId(), campaignId: activeCampaign.id, title: `Сессия ${activeSessions.length + 1}`, storyline: '', story: '', location: '', date: today(), status: 'Подготовлена' }]) }
 
-  const addMapFile = (file?: File) => {
+  const addMapFile = async (file?: File) => {
     setMapError('')
     if (!file) return
-    if (!file.type.startsWith('image/')) { setMapError('Выберите файл изображения.'); return }
-    if (file.size > 3 * 1024 * 1024) { setMapError('Размер карты должен быть не больше 3 МБ.'); return }
-    const reader = new FileReader()
-    reader.onload = () => {
-      const map = { id: makeId(), name: mapName.trim() || file.name.replace(/\.[^.]+$/, ''), image: String(reader.result), createdAt: today() }
+    try {
+      const image = await uploadMedia(file, 'maps')
+      const map = { id: makeId(), name: mapName.trim() || file.name.replace(/\.[^.]+$/, ''), image, createdAt: today() }
       setMaps((current) => [...current, map])
       writeAccountValue('dice-and-dragons-active-map', map.image)
       setMapName('')
       setNotice(`Карта «${map.name}» добавлена и выбрана для игровой комнаты.`)
+    } catch (error) {
+      setMapError(error instanceof Error ? error.message : 'Не удалось сохранить изображение.')
     }
-    reader.onerror = () => setMapError('Не удалось прочитать изображение.')
-    reader.readAsDataURL(file)
+  }
+
+  const startSharedGame = async () => {
+    try {
+      const code = await createSharedGame(activeCampaign?.name ?? 'Игровая сессия')
+      localStorage.setItem('dnd-shared-game-code', code)
+      setNotice(`Код игры ${code} создан. Игроки подключаются по коду или ссылке.`)
+      navigate(`/game?join=${code}`)
+    } catch (error) { setNotice(error instanceof Error ? error.message : 'Не удалось создать общую игру.') }
   }
 
   const activateMap = (map: MapEntry) => {
@@ -139,7 +148,7 @@ function MasterDashboard() {
     </aside>
 
     <main className="min-h-screen pl-[76px]">
-      <header className="flex min-h-20 flex-wrap items-center justify-between gap-4 border-b border-[#D8CFC3] bg-white px-6 py-4 md:px-10"><div><p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[#B87839]">DUNGEON MASTER / {activeCampaign?.system ?? rulesSystem}</p><h1 className="mt-1 text-2xl font-bold">{activeSection === 'Главная' ? activeCampaign?.name ?? 'Кабинет мастера' : activeSection}</h1><p className="mt-1 text-xs text-gray-400">{syncStatus === 'saving' ? 'Сохраняем в аккаунт…' : syncStatus === 'error' ? 'Ошибка синхронизации' : 'Сохранено в аккаунте'}</p></div><div className="flex items-center gap-4"><button onClick={() => navigate('/game')} className={primaryButton}><Swords size={18} /> Игровая комната <ChevronRight size={16} /></button><div className="hidden items-center gap-3 border-l border-gray-200 pl-4 sm:flex"><div className="text-right"><p className="text-sm font-semibold">{masterName || user?.displayName}</p><p className="text-xs text-gray-400">Мастер кампании · {user?.email}</p></div><div className="flex h-10 w-10 items-center justify-center rounded-full bg-[#E69A51] font-bold text-white">DM</div></div></div></header>
+      <header className="flex min-h-20 flex-wrap items-center justify-between gap-4 border-b border-[#D8CFC3] bg-white px-6 py-4 md:px-10"><div><p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[#B87839]">DUNGEON MASTER / {activeCampaign?.system ?? rulesSystem}</p><h1 className="mt-1 text-2xl font-bold">{activeSection === 'Главная' ? activeCampaign?.name ?? 'Кабинет мастера' : activeSection}</h1><p className="mt-1 text-xs text-gray-400" title={syncError}>{syncStatus === 'saving' ? 'Сохраняем в аккаунт…' : syncStatus === 'error' ? `Ошибка синхронизации${syncError ? `: ${syncError}` : ''}` : 'Сохранено в аккаунте'}</p></div><div className="flex items-center gap-3"><button onClick={() => void startSharedGame()} className={secondaryButton}><Users size={17} /> Создать код игры</button><button onClick={() => navigate('/game')} className={primaryButton}><Swords size={18} /> Игровая комната <ChevronRight size={16} /></button><div className="hidden items-center gap-3 border-l border-gray-200 pl-4 sm:flex"><div className="text-right"><p className="text-sm font-semibold">{masterName || user?.displayName}</p><p className="text-xs text-gray-400">Мастер кампании · {user?.email}</p></div><div className="flex h-10 w-10 items-center justify-center rounded-full bg-[#E69A51] font-bold text-white">DM</div></div></div></header>
 
       {notice && <div role="status" className="mx-auto mt-4 flex max-w-[1500px] items-center justify-between rounded-xl border border-green-200 bg-green-50 px-4 py-3 text-sm text-green-800"><span>{notice}</span><button onClick={() => setNotice('')} aria-label="Закрыть уведомление"><X size={16} /></button></div>}
 
@@ -156,7 +165,7 @@ function MasterDashboard() {
 
       {activeSection === 'Сессии' && <div className="mx-auto max-w-5xl space-y-4 p-5 md:p-8"><div className="flex flex-wrap items-end justify-between gap-3"><div><h2 className="text-2xl font-bold">Сессии · {activeCampaign?.name}</h2><p className="mt-1 text-sm text-gray-500">Подготовьте сцену, локацию и дату; после игры отметьте сессию проведённой.</p></div><button onClick={addSession} className={primaryButton}><PlusCircle size={17} /> Новая сессия</button></div>{activeSessions.map((session) => <article key={session.id} className="rounded-2xl border border-[#D8CFC3] bg-white p-5 shadow-sm"><div className="grid gap-4 md:grid-cols-[1fr_180px]"><div className="grid gap-3 sm:grid-cols-2"><label className="text-xs font-semibold">Название<input className={controlClass} value={session.title} onChange={(event) => setSessions((current) => current.map((item) => item.id === session.id ? { ...item, title: event.target.value } : item))} /></label><label className="text-xs font-semibold">Место<input className={controlClass} value={session.location} placeholder="Название локации" onChange={(event) => setSessions((current) => current.map((item) => item.id === session.id ? { ...item, location: event.target.value } : item))} /></label><label className="text-xs font-semibold">Дата<input type="date" className={controlClass} value={session.date} onChange={(event) => setSessions((current) => current.map((item) => item.id === session.id ? { ...item, date: event.target.value } : item))} /></label><label className="text-xs font-semibold">Статус<select className={controlClass} value={session.status} onChange={(event) => setSessions((current) => current.map((item) => item.id === session.id ? { ...item, status: event.target.value as Session['status'] } : item))}><option>Подготовлена</option><option>Проведена</option></select></label><label className="text-xs font-semibold sm:col-span-2">Сюжет и заметки<textarea className={`${controlClass} min-h-24`} value={session.story} placeholder="Зацепка, сцены, важные события" onChange={(event) => setSessions((current) => current.map((item) => item.id === session.id ? { ...item, story: event.target.value } : item))} /></label></div><div className="flex flex-col justify-between gap-3 rounded-xl bg-[#F9F7F3] p-3"><span className={`self-start rounded-lg px-3 py-1.5 text-xs font-bold ${session.status === 'Проведена' ? 'bg-green-100 text-green-800' : 'bg-amber-100 text-amber-800'}`}>{session.status}</span><button onClick={() => navigate('/game')} className={primaryButton}><Play size={16} /> Открыть игру</button><button onClick={() => setSessions((current) => current.filter((item) => item.id !== session.id))} className="inline-flex items-center justify-center gap-2 rounded-xl border border-red-200 px-3 py-2 text-xs font-semibold text-red-700 hover:bg-red-50"><Trash2 size={15} /> Удалить</button></div></div></article>)}{activeSessions.length === 0 && <EmptyState title="У этой кампании пока нет сессий" action="Добавить сессию" onAction={addSession} />}</div>}
 
-      {activeSection === 'Игровые карты' && <div className="mx-auto max-w-6xl space-y-5 p-5 md:p-8"><div><h2 className="text-2xl font-bold">Игровые карты</h2><p className="mt-1 text-sm text-gray-500">Загрузите карту, выберите её для комнаты или удалите устаревшую.</p></div><section className="flex flex-wrap items-end gap-3 rounded-2xl border border-[#D8CFC3] bg-white p-5 shadow-sm"><label className="min-w-56 flex-1 text-xs font-semibold">Название карты<input className={controlClass} value={mapName} onChange={(event) => setMapName(event.target.value)} placeholder="Лес у Блэкспайра" /></label><label className={`${primaryButton} cursor-pointer`}><ImagePlus size={17} /> Загрузить карту<input type="file" accept="image/*" className="hidden" onChange={(event) => { addMapFile(event.target.files?.[0]); event.currentTarget.value = '' }} /></label>{mapError && <p role="alert" className="w-full text-sm text-red-700">{mapError}</p>}</section><div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">{maps.map((map) => <article key={map.id} className="overflow-hidden rounded-2xl border border-[#D8CFC3] bg-white shadow-sm"><img src={map.image} alt={map.name} className="h-48 w-full bg-[#E8E3DA] object-cover" /><div className="p-4"><h3 className="font-bold">{map.name}</h3><p className="mt-1 text-xs text-gray-500">Добавлена {map.createdAt}</p><div className="mt-3 flex gap-2"><button onClick={() => activateMap(map)} className={`${primaryButton} flex-1`}><Check size={16} /> Выбрать</button><button onClick={() => { setMaps((current) => current.filter((item) => item.id !== map.id)); if (localStorage.getItem('dice-and-dragons-active-map') === map.image) removeAccountValue('dice-and-dragons-active-map') }} aria-label={`Удалить карту ${map.name}`} className="rounded-xl border border-red-200 px-3 text-red-600 hover:bg-red-50"><Trash2 size={16} /></button></div></div></article>)}</div>{maps.length === 0 && <EmptyState title="Карт пока нет" action="Выберите изображение выше" onAction={() => document.querySelector<HTMLInputElement>('input[type=file]')?.click()} />}</div>}
+      {activeSection === 'Игровые карты' && <div className="mx-auto max-w-6xl space-y-5 p-5 md:p-8"><div><h2 className="text-2xl font-bold">Игровые карты</h2><p className="mt-1 text-sm text-gray-500">Загрузите карту, выберите её для комнаты или удалите устаревшую.</p></div><section className="flex flex-wrap items-end gap-3 rounded-2xl border border-[#D8CFC3] bg-white p-5 shadow-sm"><label className="min-w-56 flex-1 text-xs font-semibold">Название карты<input className={controlClass} value={mapName} onChange={(event) => setMapName(event.target.value)} placeholder="Лес у Блэкспайра" /></label><label className={`${primaryButton} cursor-pointer`}><ImagePlus size={17} /> Загрузить карту<input type="file" accept="image/*" className="hidden" onChange={(event) => { void addMapFile(event.target.files?.[0]); event.currentTarget.value = '' }} /></label>{mapError && <p role="alert" className="w-full text-sm text-red-700">{mapError}</p>}</section><div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">{maps.map((map) => <article key={map.id} className="overflow-hidden rounded-2xl border border-[#D8CFC3] bg-white shadow-sm"><MediaImage source={map.image} alt={map.name} className="h-48 w-full bg-[#E8E3DA] object-cover" /><div className="p-4"><h3 className="font-bold">{map.name}</h3><p className="mt-1 text-xs text-gray-500">Добавлена {map.createdAt}</p><div className="mt-3 flex gap-2"><button onClick={() => activateMap(map)} className={`${primaryButton} flex-1`}><Check size={16} /> Выбрать</button><button onClick={() => { setMaps((current) => current.filter((item) => item.id !== map.id)); if (localStorage.getItem('dice-and-dragons-active-map') === map.image) removeAccountValue('dice-and-dragons-active-map') }} aria-label={`Удалить карту ${map.name}`} className="rounded-xl border border-red-200 px-3 text-red-600 hover:bg-red-50"><Trash2 size={16} /></button></div></div></article>)}</div>{maps.length === 0 && <EmptyState title="Карт пока нет" action="Выберите изображение выше" onAction={() => document.querySelector<HTMLInputElement>('input[type=file]')?.click()} />}</div>}
 
       {activeSection === 'Бестиарий' && <div className="mx-auto max-w-6xl space-y-5 p-5 md:p-8"><div><h2 className="text-2xl font-bold">Бестиарий</h2><p className="mt-1 text-sm text-gray-500">Здесь появятся ваши собственные противники. Создайте NPC в разделе NPC.</p></div><EmptyState title="Список противников пуст" action="Создать NPC" onAction={() => setActiveSection('NPC')} /></div>}
 

@@ -10,6 +10,7 @@ type AuthContextValue = {
   user: AccountUser | null
   loading: boolean
   syncStatus: 'saved' | 'saving' | 'error'
+  syncError: string
   signIn: (input: Credentials) => Promise<void>
   signUp: (input: Registration) => Promise<boolean>
   signOut: () => Promise<void>
@@ -37,9 +38,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<AccountUser | null>(null)
   const [loading, setLoading] = useState(true)
   const [syncStatus, setSyncStatus] = useState<AuthContextValue['syncStatus']>('saved')
+  const [syncError, setSyncError] = useState('')
 
   useEffect(() => {
-    const handleStatus = (event: Event) => setSyncStatus((event as CustomEvent<AuthContextValue['syncStatus']>).detail)
+    const handleStatus = (event: Event) => {
+      const detail = (event as CustomEvent<{ status: AuthContextValue['syncStatus']; message?: string }>).detail
+      setSyncStatus(detail.status)
+      setSyncError(detail.message ?? '')
+    }
     window.addEventListener('dnd-sync-status', handleStatus)
     const client = isSupabaseConfigured ? requireSupabase() : null
     const { data: authListener } = client?.auth.onAuthStateChange((event) => {
@@ -100,7 +106,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setUser(null)
   }, [])
 
-  const value = useMemo(() => ({ user, loading, syncStatus, signIn, signUp, signOut }), [user, loading, syncStatus, signIn, signUp, signOut])
+  const value = useMemo(() => ({ user, loading, syncStatus, syncError, signIn, signUp, signOut }), [user, loading, syncStatus, syncError, signIn, signUp, signOut])
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>
 }
 
@@ -110,3 +116,4 @@ export function useAuth() {
   if (!context) throw new Error('useAuth must be used within AuthProvider')
   return context
 }
+

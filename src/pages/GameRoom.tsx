@@ -1,5 +1,6 @@
 
 import { useEffect, useRef, useState } from 'react'
+import { useLocation } from 'react-router-dom'
 import {
   ArrowLeft,
   Users,
@@ -26,6 +27,8 @@ import {
   ChevronUp,
 } from 'lucide-react'
 import { writeAccountValue, useAccountDataSync, emptyAccountSyncList } from '../lib/accountStorage'
+import { applySharedSnapshot, gameInviteLink, readSharedGame, readSharedSnapshot, sharedSnapshotsMatch, updateSharedGame, uploadMedia } from '../lib/sharedSessions'
+import MediaImage from '../components/MediaImage'
 
 type AbilityScores = Record<'СИЛ' | 'ЛОВ', number>
 type CampaignNpc = {
@@ -34,13 +37,18 @@ type CampaignNpc = {
 }
 type MapToken = {
   id: number; name: string; type: 'player' | 'npc'; x: number; y: number; symbol: string
+  avatar?: string
   hp?: number; maxHp?: number; ac?: number; weapon?: string; attackBonus?: number; damageBonus?: number
 }
 type DiceRoll = { die: string; rolls: number[]; total: number; label?: string }
-type PartyMember = { name: string; race: string; characterClass: string; level: number; hp: number; maxHp: number; symbol: string }
+type PartyMember = { name: string; race: string; characterClass: string; level: number; hp: number; maxHp: number; symbol: string; avatar?: string }
 const randomDie = (sides: number) => Math.floor(Math.random() * sides) + 1
 
 function GameRoom() {
+  const location = useLocation()
+  const requestedCode = new URLSearchParams(location.search).get('join')?.toUpperCase() ?? ''
+  const [sharedCode, setSharedCode] = useState(() => requestedCode || localStorage.getItem('dnd-shared-game-code') || '')
+  const [sharedStatus, setSharedStatus] = useState('')
   const [activeTool, setActiveTool] = useState('move')
   const [zoom, setZoom] = useState(100)
   const [mapImage, setMapImage] = useState<string | null>(() => localStorage.getItem('dice-and-dragons-active-map'))
@@ -109,6 +117,46 @@ function GameRoom() {
   useAccountDataSync('dice-and-dragons-npcs', setAvailableNpcs, emptyAccountSyncList<CampaignNpc>())
   useAccountDataSync('dnd-party', setCharacters, emptyAccountSyncList<PartyMember>())
 
+  useEffect(() => {
+    if (!requestedCode) return
+    setSharedCode(requestedCode)
+    localStorage.setItem('dnd-shared-game-code', requestedCode)
+  }, [requestedCode])
+
+  useEffect(() => {
+    if (!sharedCode) return
+    let alive = true
+    let pulling = false
+    const pull = async () => {
+      if (pulling || document.visibilityState === 'hidden') return
+      pulling = true
+      try {
+        const game = await readSharedGame(sharedCode)
+        if (!alive) return
+        if (!sharedSnapshotsMatch(readSharedSnapshot(), game.snapshot)) applySharedSnapshot(game.snapshot)
+        setSharedStatus(`Сессия ${game.code} · ${game.members?.length ?? 0} игроков`)
+      } catch (error) {
+        if (alive) setSharedStatus(error instanceof Error ? error.message : 'Ошибка подключения к сессии.')
+      } finally { pulling = false }
+    }
+    void pull()
+    const timer = window.setInterval(() => { void pull() }, 2500)
+    return () => { alive = false; window.clearInterval(timer) }
+  }, [sharedCode])
+
+  useEffect(() => {
+    if (!sharedCode) return
+    let timer: number | undefined
+    const handleChange = (event: Event) => {
+      const detail = (event as CustomEvent<{ source: string }>).detail
+      if (detail?.source !== 'local') return
+      window.clearTimeout(timer)
+      timer = window.setTimeout(() => { void updateSharedGame(sharedCode).catch((error) => setSharedStatus(error instanceof Error ? error.message : 'Не удалось сохранить сессию.')) }, 400)
+    }
+    window.addEventListener('dnd-account-data-change', handleChange)
+    return () => { window.removeEventListener('dnd-account-data-change', handleChange); window.clearTimeout(timer) }
+  }, [sharedCode])
+
   const addCharacterToMap = (character: typeof characters[number]) => {
     const canvas = mapCanvasRef.current
     const inset = 48
@@ -120,6 +168,7 @@ function GameRoom() {
       name: character.name,
       type: 'player',
       symbol: character.symbol,
+      avatar: character.avatar,
       x: Math.min(width - inset, 90 + (index % 4) * 64),
       y: Math.min(height - inset, 90 + Math.floor(index / 4) * 64),
     }])
@@ -162,7 +211,7 @@ function GameRoom() {
     }
   }
 
-  const handleMapImage = (file?: File) => {
+  const handleMapImage = async (file?: File) => {
     setMapImageError('')
     if (!file) return
     if (!file.type.startsWith('image/')) {
@@ -170,24 +219,11 @@ function GameRoom() {
       return
     }
 
-    if (file.size > 3 * 1024 * 1024) {
-      setMapImageError('Размер изображения не должен превышать 3 МБ.')
-      return
-    }
-
-    const reader = new FileReader()
-    reader.onload = () => {
-      const imageUrl = String(reader.result)
-      const image = new Image()
-      image.onload = () => {
-        setMapImage(imageUrl)
-        writeAccountValue('dice-and-dragons-active-map', imageUrl)
-      }
-      image.onerror = () => setMapImageError('Не удалось открыть это изображение. Попробуйте другой файл.')
-      image.src = imageUrl
-    }
-    reader.onerror = () => setMapImageError('Не удалось прочитать изображение.')
-    reader.readAsDataURL(file)
+    try {
+      const imageUrl = await uploadMedia(file, 'maps', sharedCode || undefined)
+      setMapImage(imageUrl)
+      writeAccountValue('dice-and-dragons-active-map', imageUrl)
+    } catch (error) { setMapImageError(error instanceof Error ? error.message : 'Не удалось сохранить изображение.') }
   }
 
   const getCanvasPoint = (clientX: number, clientY: number) => {
@@ -242,7 +278,7 @@ function GameRoom() {
 
   const copyInviteLink = async () => {
     try {
-      await navigator.clipboard.writeText(window.location.href)
+      await navigator.clipboard.writeText(sharedCode ? gameInviteLink(sharedCode) : window.location.href)
       setInviteCopied(true)
       window.setTimeout(() => setInviteCopied(false), 2000)
     } catch {
@@ -333,15 +369,15 @@ function GameRoom() {
 
         <div className="hidden items-center gap-2 rounded-lg bg-green-50 px-3 py-2 text-xs font-semibold text-green-700 md:flex">
           <span className="h-2 w-2 rounded-full bg-green-500" />
-          Игровая сессия
+          {sharedStatus || 'Игровая сессия'}
         </div>
 
         <div className="flex items-center gap-2">
           <button onClick={() => setDmPanel('reference')} title="Шпаргалка мастера" className="flex h-10 items-center gap-2 rounded-xl border border-[#E5DDD2] px-3 text-sm font-medium hover:bg-[#F7F4EF]"><BookOpen size={17} /><span className="hidden sm:inline">Шпаргалка</span></button>
           <button onClick={() => setDmPanel('notes')} title="Заметки мастера" className="flex h-10 items-center gap-2 rounded-xl border border-[#E5DDD2] px-3 text-sm font-medium hover:bg-[#F7F4EF]"><NotebookPen size={17} /><span className="hidden sm:inline">Заметки</span></button>
-          <button onClick={copyInviteLink} className="flex h-10 items-center gap-2 rounded-xl border border-[#E5DDD2] px-3 text-sm font-medium hover:bg-[#F7F4EF]">
+          <button onClick={copyInviteLink} className="flex h-10 items-center gap-2 rounded-xl border border-[#E5DDD2] px-3 text-sm font-medium hover:bg-[#F7F4EF]" title={sharedCode ? `Код игры: ${sharedCode}` : 'Сначала создай код игры в кабинете мастера'}>
             {inviteCopied ? <Check size={17} /> : <Copy size={17} />}
-            <span className="hidden sm:inline">{inviteCopied ? 'Ссылка скопирована' : 'Пригласить'}</span>
+            <span className="hidden sm:inline">{inviteCopied ? 'Ссылка скопирована' : sharedCode ? `Пригласить · ${sharedCode}` : 'Пригласить'}</span>
           </button>
 
           <button onClick={() => setSettingsOpen(true)} aria-label="Настройки карты" className="flex h-10 w-10 items-center justify-center rounded-xl border border-[#E5DDD2] hover:bg-[#F7F4EF]">
@@ -503,7 +539,7 @@ function GameRoom() {
                 <p className="mt-1 text-sm font-semibold">{diceResult.die}{diceResult.rolls.length > 1 ? ` × ${diceResult.rolls.length}` : ''}: [{diceResult.rolls.join(', ')}] <span className="text-[#FFD08A]">= {diceResult.total}</span></p>
               </div>}
               {mapImage ? (
-                <img src={mapImage} alt="Игровая карта" draggable={false} className="pointer-events-none h-full w-full select-none object-contain" />
+                <MediaImage source={mapImage} alt="Игровая карта" className="pointer-events-none h-full w-full select-none object-contain" />
               ) : (
                 <>
                   <div className="text-5xl">🌲</div>
@@ -540,7 +576,7 @@ function GameRoom() {
                   }}
                   onPointerCancel={() => { tokenDragRef.current = null }}
                 >
-                  <div className="flex h-12 w-12 items-center justify-center rounded-full border-[3px] border-[#E69A51] bg-[#292724] text-xl shadow-lg">{token.symbol}</div>
+                  <div className="flex h-12 w-12 items-center justify-center overflow-hidden rounded-full border-[3px] border-[#E69A51] bg-[#292724] text-xl shadow-lg">{token.avatar ? <MediaImage source={token.avatar} alt={token.name} className="h-full w-full object-cover" /> : token.symbol}</div>
                   <span className="mt-1 rounded-md bg-[#292724] px-2 py-1 text-xs font-semibold text-white shadow">{token.name}</span>
                   {token.type === 'npc' && <span className="rounded bg-red-950/90 px-1.5 py-0.5 text-[10px] font-bold text-red-100">{token.hp}/{token.maxHp} HP · КД {token.ac}</span>}
                   <button
@@ -562,7 +598,7 @@ function GameRoom() {
                 {mapImage ? 'Изменить карту' : 'Загрузить карту'}
                 <input type="file" accept="image/*" className="hidden" onChange={(event) => {
                   const file = event.target.files?.[0]
-                  handleMapImage(file)
+                  void handleMapImage(file)
                   event.currentTarget.value = ''
                 }} />
               </label>

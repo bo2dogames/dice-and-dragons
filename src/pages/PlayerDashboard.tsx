@@ -2,6 +2,9 @@ import { useEffect, useMemo, useState, type FormEvent } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { ArrowLeft, Heart, Shield, Footprints, Dices, Sword, Backpack, Sparkles, Plus, Users, CalendarDays, Check, Trash2, BookOpen, ScrollText, RotateCcw } from 'lucide-react'
 import { writeAccountValue, removeAccountValue, useAccountDataSync, emptyAccountSyncList } from '../lib/accountStorage'
+import { applySharedSnapshot, joinSharedGame, normalizeGameCode } from '../lib/sharedSessions'
+import { shareMediaWithGame, uploadMedia } from '../lib/sharedSessions'
+import MediaImage from '../components/MediaImage'
 
 type Ability = 'СИЛ' | 'ЛОВ' | 'ТЕЛ' | 'ИНТ' | 'МДР' | 'ХАР'
 type Stats = Record<Ability, number>
@@ -10,7 +13,7 @@ type Hero = {
   hp: number; maxHp: number; ac: number; speed: number; proficiency: number; abilities: Stats; hitDie: number; hitDice: number
   weapon: string; damageDie: number; damageBonus: number; attackBonus: number; skills: string[]
   spells: string[]; spellSlots: number; maxSpellSlots: number; inventory: string; notes: string
-  successes: number; failures: number; symbol: string
+  successes: number; failures: number; symbol: string; avatar?: string
 }
 type Campaign = { id: string; name: string; system: string }
 type Session = { id: string; campaignId: string; title: string; location: string; date: string; status: string; story?: string }
@@ -89,6 +92,7 @@ function PlayerDashboard() {
   const [targetAc, setTargetAc] = useState(12)
   const [activeTab, setActiveTab] = useState<'hero' | 'sessions'>('hero')
   const [joinCode, setJoinCode] = useState('')
+  const [avatarError, setAvatarError] = useState('')
 
   useEffect(() => { writeAccountValue('dnd-player-characters', JSON.stringify(heroes)) }, [heroes])
   useEffect(() => { if (activeHeroId) writeAccountValue('dnd-active-player-character', activeHeroId); else removeAccountValue('dnd-active-player-character') }, [activeHeroId])
@@ -115,7 +119,7 @@ function PlayerDashboard() {
     if (!form.name.trim()) return
     const created = { ...buildHero(form), id: makeId() }
     if (editing && hero) {
-      const updated = { ...created, id: hero.id, hp: Math.min(hero.hp, created.maxHp), inventory: hero.inventory, notes: hero.notes }
+      const updated = { ...created, id: hero.id, hp: Math.min(hero.hp, created.maxHp), inventory: hero.inventory, notes: hero.notes, avatar: hero.avatar }
       setHeroes((current) => current.map((item) => item.id === hero.id ? updated : item))
       syncHeroToParty(updated, hero.name)
       setNotice('Лист героя обновлён.')
@@ -134,10 +138,19 @@ function PlayerDashboard() {
     syncHeroToParty(updated)
   }
 
+  const uploadHeroAvatar = async (file?: File) => {
+    if (!file || !hero) return
+    setAvatarError('')
+    try {
+      const code = localStorage.getItem('dnd-shared-game-code') || undefined
+      patchHero({ avatar: await uploadMedia(file, 'avatars', code) })
+    } catch (error) { setAvatarError(error instanceof Error ? error.message : 'Не удалось сохранить портрет.') }
+  }
+
   const syncHeroToParty = (updated: Hero, previousName = updated.name) => {
     if (!memberships.some((membership) => membership.characterId === updated.id)) return
     const party = readJson<Array<Record<string, unknown>>>('dnd-party', [])
-    const player = { characterId: updated.id, name: updated.name, race: updated.race, characterClass: updated.characterClass, level: updated.level, hp: updated.hp, maxHp: updated.maxHp, symbol: updated.symbol }
+    const player = { characterId: updated.id, name: updated.name, race: updated.race, characterClass: updated.characterClass, level: updated.level, hp: updated.hp, maxHp: updated.maxHp, symbol: updated.symbol, avatar: updated.avatar }
     writeAccountValue('dnd-party', JSON.stringify([...party.filter((item) => item.name !== previousName && item.name !== updated.name), player]))
   }
 
@@ -173,14 +186,42 @@ function PlayerDashboard() {
     writeAccountValue('dnd-active-campaign', session.campaignId)
     writeAccountValue('dnd-active-session', session.id)
     const party = readJson<Array<Record<string, unknown>>>('dnd-party', [])
-    const player = { characterId: hero.id, name: hero.name, race: hero.race, characterClass: hero.characterClass, level: hero.level, hp: hero.hp, maxHp: hero.maxHp, symbol: hero.symbol }
+    const player = { characterId: hero.id, name: hero.name, race: hero.race, characterClass: hero.characterClass, level: hero.level, hp: hero.hp, maxHp: hero.maxHp, symbol: hero.symbol, avatar: hero.avatar }
     writeAccountValue('dnd-party', JSON.stringify([...party.filter((item) => item.characterId !== hero.id && item.name !== hero.name), player]))
     setNotice(`Герой ${hero.name} готов к сессии «${session.title}».`)
     navigate('/game')
   }
 
-  const joinByCode = (event: FormEvent<HTMLFormElement>) => {
+  const joinByCode = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
+    const code = normalizeGameCode(joinCode)
+    if (code) {
+      if (!hero) { setNotice('Сначала создай или выбери героя.'); setActiveTab('hero'); setCreating(true); return }
+      try {
+        const partyMember = { characterId: hero.id, name: hero.name, race: hero.race, characterClass: hero.characterClass, level: hero.level, hp: hero.hp, maxHp: hero.maxHp, symbol: hero.symbol }
+        let game = await joinSharedGame(code, partyMember)
+        let noticeMessage = `Ты подключился к сессии «${game.title}».`
+        if (hero.avatar) {
+          try {
+            const sharedAvatar = await shareMediaWithGame(hero.avatar, 'avatars', code)
+            game = await joinSharedGame(code, { ...partyMember, avatar: sharedAvatar })
+            setHeroes((current) => current.map((item) => item.id === hero.id ? { ...item, avatar: sharedAvatar } : item))
+          } catch { noticeMessage += ' Портрет героя не удалось добавить в общую комнату.' }
+        }
+        applySharedSnapshot(game.snapshot)
+        localStorage.setItem('dnd-shared-game-code', code)
+        const campaignId = String(game.snapshot['dnd-active-campaign'] ?? '')
+        if (campaignId) {
+          const membership = { campaignId, characterId: hero.id, joinedAt: new Date().toISOString() }
+          setMemberships((current) => [...current.filter((item) => !(item.campaignId === campaignId && item.characterId === hero.id)), membership])
+          writeAccountValue('dnd-active-campaign', campaignId)
+          writeAccountValue('dnd-player-memberships', JSON.stringify([...memberships.filter((item) => !(item.campaignId === campaignId && item.characterId === hero.id)), membership]))
+        }
+        setNotice(noticeMessage)
+        navigate(`/game?join=${code}`)
+      } catch (error) { setNotice(error instanceof Error ? error.message : 'Не удалось подключиться к сессии.') }
+      return
+    }
     const campaign = campaigns.find((item) => item.id === joinCode.trim() || item.name.toLowerCase() === joinCode.trim().toLowerCase())
     if (!campaign) { setNotice('Кампания не найдена. Пока можно подключиться к кампаниям, сохранённым в этом браузере.'); return }
     const session = preparedSessions.find((item) => item.campaignId === campaign.id)
@@ -221,9 +262,9 @@ function PlayerDashboard() {
       {notice && <div role="status" className="flex items-center justify-between rounded-xl border border-green-200 bg-green-50 px-4 py-3 text-sm text-green-800">{notice}<button onClick={() => setNotice('')} aria-label="Закрыть"><span aria-hidden>×</span></button></div>}
 
       {activeTab === 'sessions' ? <section className="space-y-5">
-        <div className="grid gap-4 lg:grid-cols-[1fr_320px]"><div className="rounded-2xl border border-[#D8CFC3] bg-white p-5 shadow-sm"><div className="flex items-center justify-between"><div><h2 className="text-xl font-bold">Открытые сессии</h2><p className="mt-1 text-sm text-gray-500">Выбери подготовленную игру из кампаний мастера.</p></div><CalendarDays className="text-[#B87839]" /></div>
+        <div className="grid gap-4 lg:grid-cols-[1fr_320px]"><div className="rounded-2xl border border-[#D8CFC3] bg-white p-5 shadow-sm"><div className="flex items-center justify-between"><div><h2 className="text-xl font-bold">Открытые сессии</h2><p className="mt-1 text-sm text-gray-500">Выбери игру мастера или подключись по коду.</p></div><CalendarDays className="text-[#B87839]" /></div>
           {preparedSessions.length ? <div className="mt-4 space-y-3">{preparedSessions.map((session) => { const campaign = campaigns.find((item) => item.id === session.campaignId); const joined = heroMemberships.some((item) => item.campaignId === session.campaignId); return <article key={session.id} className="rounded-xl border border-[#E9E2D8] bg-[#FDFCFB] p-4"><div className="flex flex-wrap items-start justify-between gap-3"><div><p className="text-xs font-bold uppercase tracking-wider text-[#B87839]">{campaign?.system ?? 'D&D'} · {campaign?.name ?? 'Кампания'}</p><h3 className="mt-1 text-lg font-bold">{session.title}</h3><p className="mt-1 text-sm text-gray-500">{session.location || 'Локация уточняется'} · {session.date || 'Дата не указана'}</p>{session.story && <p className="mt-3 max-w-2xl text-sm text-gray-600">{session.story}</p>}</div><button onClick={() => joinSession(session)} className={buttonClass}><Check size={16} />{joined ? 'Войти в сессию' : 'Подключиться'}</button></div></article> })}</div> : <div className="mt-4 rounded-xl border border-dashed border-[#D8CFC3] p-8 text-center"><CalendarDays className="mx-auto text-[#B87839]" /><p className="mt-2 font-semibold">Подготовленных сессий пока нет</p><p className="mt-1 text-sm text-gray-500">Попроси мастера создать кампанию и подготовить сессию в этом браузере.</p></div>}
-        </div><section className="h-fit rounded-2xl border border-[#D8CFC3] bg-white p-5 shadow-sm"><h2 className="font-bold">Код или название кампании</h2><p className="mt-1 text-xs text-gray-500">Для кампании, уже добавленной в этот браузер.</p><form onSubmit={joinByCode} className="mt-3 space-y-3"><input value={joinCode} onChange={(event) => setJoinCode(event.target.value)} placeholder="Название кампании или код" className={controlClass} /><button className={`${buttonClass} w-full`}>Найти сессию</button></form><p className="mt-4 rounded-lg bg-[#F9F7F3] p-3 text-xs leading-5 text-gray-500">Нет кампании в списке? Попроси мастера открыть её на этом устройстве и подготовить сессию. Онлайн-подключение между разными устройствами потребует серверной части.</p></section></div>
+        </div><section className="h-fit rounded-2xl border border-[#D8CFC3] bg-white p-5 shadow-sm"><h2 className="font-bold">Код или ссылка приглашения</h2><p className="mt-1 text-xs text-gray-500">Введи код из пяти символов или вставь ссылку мастера.</p><form onSubmit={joinByCode} className="mt-3 space-y-3"><input value={joinCode} onChange={(event) => setJoinCode(event.target.value)} placeholder="Например, 7KQ2M или ссылка" className={controlClass} /><button className={`${buttonClass} w-full`}>Подключиться к игре</button></form></section></div>
         <section className="rounded-2xl border border-[#D8CFC3] bg-white p-5 shadow-sm"><h3 className="font-bold">Мои приключения</h3>{heroMemberships.length ? <div className="mt-3 flex flex-wrap gap-2">{heroMemberships.map((membership) => <span key={membership.campaignId} className="rounded-lg bg-[#F4EDE4] px-3 py-2 text-sm">{campaigns.find((item) => item.id === membership.campaignId)?.name ?? 'Кампания'}</span>)}</div> : <p className="mt-1 text-sm text-gray-500">Герой пока не вступил ни в одну кампанию.</p>}</section>
       </section> : creating ? <section className="grid items-start gap-5 lg:grid-cols-[1fr_360px]"><form onSubmit={saveHero} className="space-y-5 rounded-2xl border border-[#D8CFC3] bg-white p-5 shadow-sm md:p-7"><div><p className="text-xs font-bold uppercase tracking-wider text-[#B87839]">{editing ? 'Обнови лист' : 'Создание персонажа'}</p><h2 className="mt-1 text-2xl font-bold">Кто отправится в путь?</h2><p className="mt-1 text-sm text-gray-500">Выбери происхождение, класс и предысторию. Основные параметры рассчитаются сами.</p></div>
         <label className="block text-sm font-semibold">Имя героя<input required autoFocus value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} placeholder="Например, Элира Звёздный Свет" className={controlClass} /></label>
@@ -233,7 +274,7 @@ function PlayerDashboard() {
       </form><aside className="rounded-2xl border border-[#D8CFC3] bg-[#292724] p-5 text-white shadow-lg"><h3 className="font-bold">Лист искателя приключений</h3><p className="mt-2 text-sm text-white/70">Параметры, здоровье, атаки и заклинания будут рассчитаны по выбранным расе и классу.</p><div className="mt-5 rounded-xl border border-white/10 bg-black/10 p-3 text-xs leading-5 text-white/65"><BookOpen size={15} className="mr-1 inline text-[#E69A51]" />Создайте своего героя с нуля и настройте его лист после сохранения.</div></aside></section>
       : hero ? <section className="space-y-5"><div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-[#D8CFC3] bg-white p-4 shadow-sm"><label className="flex items-center gap-2 text-sm font-semibold"><span>Активный герой</span><select value={hero.id} onChange={(event) => setActiveHeroId(event.target.value)} className="rounded-lg border border-[#D8CFC3] bg-[#F9F7F3] px-3 py-2">{heroes.map((item) => <option key={item.id} value={item.id}>{item.name} · {item.characterClass}</option>)}</select></label><div className="flex flex-wrap gap-2"><button onClick={() => { setForm({ name: hero.name, race: hero.race, characterClass: hero.characterClass, background: hero.background, level: hero.level }); setEditing(true); setCreating(true) }} className="rounded-xl border border-[#D8CFC3] px-3 py-2 text-sm font-semibold hover:bg-[#F9F7F3]">Изменить лист</button><button onClick={() => setActiveTab('sessions')} className={buttonClass}><Users size={16} /> Найти сессию</button></div></div>
 
-        <div className="grid items-start gap-5 xl:grid-cols-[minmax(0,1fr)_330px]"><div className="space-y-5"><section className="overflow-hidden rounded-2xl border border-[#5A4B38] bg-white shadow-sm"><div className="flex flex-wrap items-start gap-4 bg-[radial-gradient(ellipse_at_top_right,_var(--tw-gradient-stops))] from-[#6C492C] via-[#332B22] to-[#292724] p-6 text-white"><div className="flex h-16 w-16 items-center justify-center rounded-2xl border border-[#E69A51]/50 bg-[#E69A51]/15 text-3xl">{hero.symbol}</div><div className="min-w-0 flex-1"><p className="text-xs font-bold uppercase tracking-[0.18em] text-[#E69A51]">{hero.race} · {hero.characterClass} · {hero.background}</p><h2 className="mt-1 text-2xl font-bold">{hero.name}</h2><p className="mt-1 text-sm text-white/65">Уровень {hero.level} · бонус мастерства +{hero.proficiency} · {hero.skills.join(', ')}</p></div><button onClick={deleteHero} aria-label="Удалить героя" className="rounded-lg border border-white/15 p-2 text-white/70 hover:bg-red-500/20 hover:text-red-200"><Trash2 size={17} /></button></div>
+        <div className="grid items-start gap-5 xl:grid-cols-[minmax(0,1fr)_330px]"><div className="space-y-5"><section className="overflow-hidden rounded-2xl border border-[#5A4B38] bg-white shadow-sm"><div className="flex flex-wrap items-start gap-4 bg-[radial-gradient(ellipse_at_top_right,_var(--tw-gradient-stops))] from-[#6C492C] via-[#332B22] to-[#292724] p-6 text-white"><label title="Загрузить портрет героя" className="flex h-16 w-16 cursor-pointer items-center justify-center overflow-hidden rounded-2xl border border-[#E69A51]/50 bg-[#E69A51]/15 text-3xl">{hero.avatar ? <MediaImage source={hero.avatar} alt={`Портрет ${hero.name}`} className="h-full w-full object-cover" /> : hero.symbol}<input type="file" accept="image/*" className="hidden" onChange={(event) => { void uploadHeroAvatar(event.target.files?.[0]); event.currentTarget.value = '' }} /></label><div className="min-w-0 flex-1"><p className="text-xs font-bold uppercase tracking-[0.18em] text-[#E69A51]">{hero.race} · {hero.characterClass} · {hero.background}</p><h2 className="mt-1 text-2xl font-bold">{hero.name}</h2><p className="mt-1 text-sm text-white/65">Уровень {hero.level} · бонус мастерства +{hero.proficiency} · {hero.skills.join(', ')}</p>{avatarError && <p role="alert" className="mt-1 text-xs text-red-200">{avatarError}</p>}</div><button onClick={deleteHero} aria-label="Удалить героя" className="rounded-lg border border-white/15 p-2 text-white/70 hover:bg-red-500/20 hover:text-red-200"><Trash2 size={17} /></button></div>
           <div className="grid grid-cols-2 gap-3 p-4 sm:grid-cols-4"><div className="rounded-xl border border-[#E9E2D8] bg-[#F9F7F3] p-3"><p className="flex items-center gap-1 text-xs text-gray-500"><Shield size={14} /> КД</p><p className="mt-1 text-2xl font-bold">{hero.ac}</p></div><div className="rounded-xl border border-[#E9E2D8] bg-[#F9F7F3] p-3"><p className="flex items-center gap-1 text-xs text-gray-500"><Footprints size={14} /> Скорость</p><p className="mt-1 text-2xl font-bold">{hero.speed} фт.</p></div><div className="rounded-xl border border-[#E9E2D8] bg-[#F9F7F3] p-3"><p className="flex items-center gap-1 text-xs text-gray-500"><Dices size={14} /> Инициатива</p><p className="mt-1 text-2xl font-bold">{signed(modifier(hero.abilities.ЛОВ))}</p></div><div className="rounded-xl border border-[#E9E2D8] bg-[#F9F7F3] p-3"><p className="text-xs text-gray-500">Восприятие</p><p className="mt-1 text-2xl font-bold">{10 + modifier(hero.abilities.МДР)}</p></div></div>
         </section>
 

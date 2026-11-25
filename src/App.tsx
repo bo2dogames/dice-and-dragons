@@ -1,5 +1,5 @@
 
-import { BrowserRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom'
+import { HashRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom'
 import type { ReactNode } from 'react'
 
 import Home from './pages/Home'
@@ -20,7 +20,7 @@ function ProtectedRoute({ children }: { children: ReactNode }) {
 
 function App() {
   return (
-    <BrowserRouter basename={import.meta.env.BASE_URL}>
+    <HashRouter>
       <AuthProvider>
       <Routes>
         <Route path="/" element={<Home />} />
@@ -32,8 +32,9 @@ function App() {
         <Route path="/game" element={<ProtectedRoute><GameRoom /></ProtectedRoute>} />
       </Routes>
       </AuthProvider>
-    </BrowserRouter>
+    </HashRouter>
   )
 }
 
 export default App
+
