@@ -45,12 +45,16 @@ function emitSyncError(error: unknown) {
   window.dispatchEvent(new CustomEvent('dnd-sync-status', { detail: { status: 'error', message } }))
 }
 
+function parseAccountValue(value: string): unknown {
+  try { return JSON.parse(value) } catch { return value }
+}
+
 async function persist(key: string, value: string | null) {
   if (!keys.includes(key) || !activeUserId) return
   const client = requireSupabase()
   const result = value === null
     ? await client.from('account_data').delete().eq('user_id', activeUserId).eq('data_key', key)
-    : await client.from('account_data').upsert({ user_id: activeUserId, data_key: key, data_value: JSON.parse(value), updated_at: new Date().toISOString() }, { onConflict: 'user_id,data_key' }).select('updated_at').single()
+    : await client.from('account_data').upsert({ user_id: activeUserId, data_key: key, data_value: parseAccountValue(value), updated_at: new Date().toISOString() }, { onConflict: 'user_id,data_key' }).select('updated_at').single()
   if (result.error) throw result.error
   if (value === null) lastSeenUpdates.delete(key)
   else if ('data' in result && result.data?.updated_at) lastSeenUpdates.set(key, result.data.updated_at)
