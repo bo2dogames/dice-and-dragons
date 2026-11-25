@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { writeAccountValue } from '../lib/accountStorage'
+import { writeAccountValue, useAccountDataSync, emptyAccountSyncList } from '../lib/accountStorage'
 import { Plus, Shield, Heart, Footprints, Swords, Trash2, ScrollText, Sparkles } from 'lucide-react'
 
 type Ability = 'СИЛ' | 'ЛОВ' | 'ТЕЛ' | 'ИНТ' | 'МДР' | 'ХАР'
@@ -92,6 +92,7 @@ function NpcWorkshop() {
   const preview = createNpc(name || 'Новый NPC', raceName, className, chosenWeapon?.name ?? 'Без оружия', level)
 
   useEffect(() => { writeAccountValue('dice-and-dragons-npcs', JSON.stringify(npcs)) }, [npcs])
+  useAccountDataSync('dice-and-dragons-npcs', setNpcs, emptyAccountSyncList<Npc>())
 
   const addNpc = (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault()
@@ -148,3 +149,4 @@ function NpcWorkshop() {
 }
 
 export default NpcWorkshop
+

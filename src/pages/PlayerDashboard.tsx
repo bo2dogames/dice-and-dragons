@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState, type FormEvent } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { ArrowLeft, Heart, Shield, Footprints, Dices, Sword, Backpack, Sparkles, Plus, Users, CalendarDays, Check, Trash2, BookOpen, ScrollText, RotateCcw } from 'lucide-react'
-import { writeAccountValue, removeAccountValue } from '../lib/accountStorage'
+import { writeAccountValue, removeAccountValue, useAccountDataSync, emptyAccountSyncList } from '../lib/accountStorage'
 
 type Ability = 'СИЛ' | 'ЛОВ' | 'ТЕЛ' | 'ИНТ' | 'МДР' | 'ХАР'
 type Stats = Record<Ability, number>
@@ -79,8 +79,8 @@ function PlayerDashboard() {
   const [heroes, setHeroes] = useState<Hero[]>(() => readJson('dnd-player-characters', []))
   const [activeHeroId, setActiveHeroId] = useState(() => localStorage.getItem('dnd-active-player-character') ?? '')
   const [memberships, setMemberships] = useState<Membership[]>(() => readJson('dnd-player-memberships', []))
-  const [campaigns] = useState<Campaign[]>(() => readJson('dnd-campaigns', []))
-  const [sessions] = useState<Session[]>(() => readJson('dnd-sessions', []))
+  const [campaigns, setCampaigns] = useState<Campaign[]>(() => readJson('dnd-campaigns', []))
+  const [sessions, setSessions] = useState<Session[]>(() => readJson('dnd-sessions', []))
   const [creating, setCreating] = useState(false)
   const [editing, setEditing] = useState(false)
   const [form, setForm] = useState({ name: '', race: 'Человек', characterClass: 'Воин', background: 'Солдат', level: 1 })
@@ -93,6 +93,12 @@ function PlayerDashboard() {
   useEffect(() => { writeAccountValue('dnd-player-characters', JSON.stringify(heroes)) }, [heroes])
   useEffect(() => { if (activeHeroId) writeAccountValue('dnd-active-player-character', activeHeroId); else removeAccountValue('dnd-active-player-character') }, [activeHeroId])
   useEffect(() => { writeAccountValue('dnd-player-memberships', JSON.stringify(memberships)) }, [memberships])
+
+  useAccountDataSync('dnd-player-characters', setHeroes, emptyAccountSyncList<Hero>())
+  useAccountDataSync('dnd-active-player-character', setActiveHeroId, '')
+  useAccountDataSync('dnd-player-memberships', setMemberships, emptyAccountSyncList<Membership>())
+  useAccountDataSync('dnd-campaigns', setCampaigns, emptyAccountSyncList<Campaign>())
+  useAccountDataSync('dnd-sessions', setSessions, emptyAccountSyncList<Session>())
 
   const hero = heroes.find((item) => item.id === activeHeroId) ?? heroes[0]
   const preview = useMemo(() => buildHero({ ...form, name: form.name || 'Новый герой' }), [form])
@@ -251,3 +257,4 @@ function PlayerDashboard() {
 }
 
 export default PlayerDashboard
+

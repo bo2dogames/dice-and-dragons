@@ -6,7 +6,7 @@ import {
   BookOpen, Play, Pencil, Save, X, CircleHelp, Heart,
 } from 'lucide-react'
 import NpcWorkshop from './NpcWorkshop'
-import { writeAccountValue, removeAccountValue } from '../lib/accountStorage'
+import { writeAccountValue, removeAccountValue, useAccountDataSync, emptyAccountSyncList } from '../lib/accountStorage'
 import { useAuth } from '../auth/AuthContext'
 
 type Section = 'Главная' | 'Мои кампании' | 'Игровые карты' | 'Бестиарий' | 'NPC' | 'Создать кампанию' | 'Настройки' | 'Сессии'
@@ -55,6 +55,15 @@ function MasterDashboard() {
   useEffect(() => { writeAccountValue('dnd-master-name', masterName) }, [masterName])
   useEffect(() => { writeAccountValue('dnd-rules-system', rulesSystem) }, [rulesSystem])
   useEffect(() => { writeAccountValue('dnd-party', JSON.stringify(party)) }, [party])
+
+  useAccountDataSync('dnd-campaigns', setCampaigns, emptyAccountSyncList<Campaign>())
+  useAccountDataSync('dnd-sessions', setSessions, emptyAccountSyncList<Session>())
+  useAccountDataSync('dnd-maps', setMaps, emptyAccountSyncList<MapEntry>())
+  useAccountDataSync('dice-and-dragons-npcs', setNpcs, emptyAccountSyncList<NpcRecord>())
+  useAccountDataSync('dnd-active-campaign', setActiveCampaignId, '')
+  useAccountDataSync('dnd-master-name', setMasterName, 'Dungeon Master')
+  useAccountDataSync('dnd-rules-system', setRulesSystem, 'D&D 5e')
+  useAccountDataSync('dnd-party', setParty, emptyAccountSyncList<PartyMember>())
 
   const activeCampaign = campaigns.find((campaign) => campaign.id === activeCampaignId) ?? campaigns[0]
   const activeSessions = sessions.filter((session) => session.campaignId === activeCampaign?.id)
@@ -163,3 +172,4 @@ function EmptyState({ title, action, onAction }: { title: string; action: string
 }
 
 export default MasterDashboard
+

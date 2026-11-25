@@ -25,7 +25,7 @@ import {
   ChevronDown,
   ChevronUp,
 } from 'lucide-react'
-import { writeAccountValue } from '../lib/accountStorage'
+import { writeAccountValue, useAccountDataSync, emptyAccountSyncList } from '../lib/accountStorage'
 
 type AbilityScores = Record<'СИЛ' | 'ЛОВ', number>
 type CampaignNpc = {
@@ -73,7 +73,7 @@ function GameRoom() {
   const [position, setPosition] = useState({ x: 0, y: 0 })
   const [isDragging, setIsDragging] = useState(false)
   const [dragStart, setDragStart] = useState({ x: 0, y: 0 })
-  const [availableNpcs] = useState<CampaignNpc[]>(() => {
+  const [availableNpcs, setAvailableNpcs] = useState<CampaignNpc[]>(() => {
     try {
       const saved = localStorage.getItem('dice-and-dragons-npcs')
       return saved ? JSON.parse(saved) as CampaignNpc[] : []
@@ -102,6 +102,12 @@ function GameRoom() {
   useEffect(() => {
     writeAccountValue('dice-and-dragons-dm-notes', dmNotes)
   }, [dmNotes])
+
+  useAccountDataSync('dice-and-dragons-active-map', setMapImage, null as string | null)
+  useAccountDataSync('dice-and-dragons-map-tokens', setTokens, emptyAccountSyncList<MapToken>())
+  useAccountDataSync('dice-and-dragons-dm-notes', setDmNotes, '')
+  useAccountDataSync('dice-and-dragons-npcs', setAvailableNpcs, emptyAccountSyncList<CampaignNpc>())
+  useAccountDataSync('dnd-party', setCharacters, emptyAccountSyncList<PartyMember>())
 
   const addCharacterToMap = (character: typeof characters[number]) => {
     const canvas = mapCanvasRef.current
@@ -728,3 +734,4 @@ function GameRoom() {
 }
 
 export default GameRoom
+
