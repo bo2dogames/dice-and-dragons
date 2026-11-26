@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, type FormEvent } from 'react'
-import { Link, useNavigate } from 'react-router-dom'
+import { Link, useLocation, useNavigate } from 'react-router-dom'
 import { ArrowLeft, Heart, Shield, Footprints, Dices, Sword, Backpack, Sparkles, Plus, Users, CalendarDays, Check, Trash2, BookOpen, ScrollText, RotateCcw } from 'lucide-react'
 import { writeAccountValue, removeAccountValue, useAccountDataSync, emptyAccountSyncList } from '../lib/accountStorage'
 import { applySharedSnapshot, joinSharedGame, normalizeGameCode } from '../lib/sharedSessions'
