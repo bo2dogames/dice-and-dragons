@@ -120,7 +120,7 @@ grant execute on function public.can_access_shared_game(text) to authenticated;
 
 insert into storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
 values ('dnd-media', 'dnd-media', false, 10485760, array['image/jpeg','image/png','image/webp','image/gif','image/avif'])
-on conflict (id) do update set public = false, file_size_limit = 10485760;
+on conflict (id) do update set public = false, file_size_limit = 26214400;
 
 drop policy if exists "DND media readable by owner or game members" on storage.objects;
 create policy "DND media readable by owner or game members"
