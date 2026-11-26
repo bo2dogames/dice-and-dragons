@@ -105,6 +105,11 @@ function PlayerDashboard() {
   useAccountDataSync('dnd-campaigns', setCampaigns, emptyAccountSyncList<Campaign>())
   useAccountDataSync('dnd-sessions', setSessions, emptyAccountSyncList<Session>())
 
+  useEffect(() => {
+    const inviteCode = normalizeGameCode(new URLSearchParams(location.search).get('join') ?? '')
+    if (inviteCode) setJoinCode(inviteCode)
+  }, [location.search])
+
   const hero = heroes.find((item) => item.id === activeHeroId) ?? heroes[0]
   const preview = useMemo(() => buildHero({ ...form, name: form.name || 'Новый герой' }), [form])
   const preparedSessions = sessions.filter((session) => session.status === 'Подготовлена')
