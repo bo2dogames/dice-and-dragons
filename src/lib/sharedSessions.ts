@@ -104,7 +104,7 @@ export async function updateSharedGame(code: string, snapshot = readSharedSnapsh
 
 export function gameInviteLink(code: string) {
   const base = new URL(import.meta.env.BASE_URL, window.location.origin)
-  return `${base.href}#/game?join=${encodeURIComponent(code)}`
+  return `${base.href}#/player?join=${encodeURIComponent(code)}`
 }
 
 export function normalizeGameCode(value: string) {
