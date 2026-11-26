@@ -483,9 +483,8 @@ function GameRoom() {
           </div>
 
           <div
-            className="relative flex min-h-0 flex-1 items-center justify-center overflow-hidden bg-[#E8E3DA]"
+            className="relative flex min-h-0 flex-1 items-center justify-center overflow-hidden overscroll-none bg-[#E8E3DA]"
             onWheel={(event) => {
-              event.preventDefault()
               setZoom((currentZoom) => Math.min(200, Math.max(50, currentZoom + (event.deltaY < 0 ? 10 : -10))))
             }}
           >
