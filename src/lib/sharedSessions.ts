@@ -58,13 +58,10 @@ export async function shareMediaWithGame(source: string, category: string, code:
   return uploadMedia(file, category, code)
 }
 
-export async function createSharedGame(title: string) {
-  const { data, error } = await requireSupabase().rpc('create_shared_game', { p_title: title, p_snapshot: {} })
-  if (error) throw error
-  const code = String(data)
-  const snapshot = readSharedSnapshot()
+async function shareSnapshotImages(snapshot: Record<string, unknown>, code: string) {
   const moved = new Map<string, string>()
   const move = async (source: string, category: string) => {
+    if (source.startsWith(`storage://games/${code.toUpperCase()}/`)) return source
     if (!moved.has(source)) moved.set(source, await shareMediaWithGame(source, category, code))
     return moved.get(source)!
   }
@@ -79,7 +76,15 @@ export async function createSharedGame(title: string) {
     }
     return value
   }
-  const sharedSnapshot = await shareImages(snapshot) as Record<string, unknown>
+  return await shareImages(snapshot) as Record<string, unknown>
+}
+
+export async function createSharedGame(title: string) {
+  const { data, error } = await requireSupabase().rpc('create_shared_game', { p_title: title, p_snapshot: {} })
+  if (error) throw error
+  const code = String(data)
+  const snapshot = readSharedSnapshot()
+  const sharedSnapshot = await shareSnapshotImages(snapshot, code)
   await requireSupabase().rpc('update_shared_game', { p_code: code, p_snapshot: sharedSnapshot }).then(({ error: updateError }) => { if (updateError) throw updateError })
   applySharedSnapshot(sharedSnapshot)
   return code
@@ -88,7 +93,16 @@ export async function createSharedGame(title: string) {
 export async function readSharedGame(code: string) {
   const { data, error } = await requireSupabase().rpc('read_shared_game', { p_code: code.toUpperCase() })
   if (error) throw error
-  return data as SharedGame
+  const game = data as SharedGame
+  const userId = (await requireSupabase().auth.getUser()).data.user?.id
+  if (userId && game.owner_id === userId) {
+    const sharedSnapshot = await shareSnapshotImages(game.snapshot, game.code)
+    if (!sharedSnapshotsMatch(game.snapshot, sharedSnapshot)) {
+      await updateSharedGame(game.code, sharedSnapshot)
+      game.snapshot = sharedSnapshot
+    }
+  }
+  return game
 }
 
 export async function joinSharedGame(code: string, character: Record<string, unknown>) {
