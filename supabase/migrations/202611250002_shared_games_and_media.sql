@@ -127,8 +127,8 @@ create policy "DND media readable by owner or game members"
 on storage.objects for select to authenticated
 using (
   bucket_id = 'dnd-media' and (
-    (storage.foldername(name))[1] = 'users' and (storage.foldername(name))[2] = auth.uid()::text
-    or (storage.foldername(name))[1] = 'games' and public.can_access_shared_game((storage.foldername(name))[2])
+    name like 'users/' || auth.uid()::text || '/%'
+    or split_part(name, '/', 1) = 'games' and public.can_access_shared_game(split_part(name, '/', 2))
   )
 );
 
@@ -137,8 +137,8 @@ create policy "DND media upload to own or joined game folders"
 on storage.objects for insert to authenticated
 with check (
   bucket_id = 'dnd-media' and (
-    (storage.foldername(name))[1] = 'users' and (storage.foldername(name))[2] = auth.uid()::text
-    or (storage.foldername(name))[1] = 'games' and public.can_access_shared_game((storage.foldername(name))[2])
+    name like 'users/' || auth.uid()::text || '/%'
+    or split_part(name, '/', 1) = 'games' and public.can_access_shared_game(split_part(name, '/', 2))
   )
 );
 
@@ -147,8 +147,7 @@ create policy "DND media deletion by owner or game members"
 on storage.objects for delete to authenticated
 using (
   bucket_id = 'dnd-media' and (
-    (storage.foldername(name))[1] = 'users' and (storage.foldername(name))[2] = auth.uid()::text
-    or (storage.foldername(name))[1] = 'games' and public.can_access_shared_game((storage.foldername(name))[2])
+    name like 'users/' || auth.uid()::text || '/%'
+    or split_part(name, '/', 1) = 'games' and public.can_access_shared_game(split_part(name, '/', 2))
   )
 );
-
