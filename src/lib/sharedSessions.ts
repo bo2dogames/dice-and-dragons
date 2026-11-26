@@ -109,7 +109,7 @@ export function normalizeGameCode(value: string) {
 
 export async function uploadMedia(file: File, category: string, gameCode?: string) {
   if (!file.type.startsWith('image/')) throw new Error('Выберите файл изображения.')
-  if (file.size > 10 * 1024 * 1024) throw new Error('Изображение должно быть не больше 10 МБ.')
+  if (file.size > 25 * 1024 * 1024) throw new Error('Изображение должно быть не больше 25 МБ.')
   const userId = (await requireSupabase().auth.getUser()).data.user?.id
   if (!userId) throw new Error('Войдите в аккаунт, чтобы сохранить изображение.')
   const safeName = file.name.toLowerCase().replace(/[^a-z0-9._-]/g, '-').slice(-70) || 'image'
