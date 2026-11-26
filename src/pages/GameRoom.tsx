@@ -1,6 +1,6 @@
 
 import { useEffect, useRef, useState } from 'react'
-import { useLocation } from 'react-router-dom'
+import { useLocation, useNavigate } from 'react-router-dom'
 import {
   ArrowLeft,
   Users,
@@ -46,8 +46,10 @@ const randomDie = (sides: number) => Math.floor(Math.random() * sides) + 1
 
 function GameRoom() {
   const location = useLocation()
+  const navigate = useNavigate()
   const requestedCode = new URLSearchParams(location.search).get('join')?.toUpperCase() ?? ''
   const [sharedCode, setSharedCode] = useState(() => requestedCode || localStorage.getItem('dnd-shared-game-code') || '')
+  const [sharedAccess, setSharedAccess] = useState(false)
   const [sharedStatus, setSharedStatus] = useState('')
   const [activeTool, setActiveTool] = useState('move')
   const [zoom, setZoom] = useState(100)
@@ -133,16 +135,27 @@ function GameRoom() {
       try {
         const game = await readSharedGame(sharedCode)
         if (!alive) return
+        setSharedAccess(true)
         if (!sharedSnapshotsMatch(readSharedSnapshot(), game.snapshot)) applySharedSnapshot(game.snapshot)
         setSharedStatus(`Сессия ${game.code} · ${game.members?.length ?? 0} игроков`)
       } catch (error) {
-        if (alive) setSharedStatus(error instanceof Error ? error.message : 'Ошибка подключения к сессии.')
+        if (alive) {
+          const message = error instanceof Error ? error.message : 'Ошибка подключения к сессии.'
+          setSharedStatus(message)
+          const response = error as { code?: string; status?: number }
+          if (response.code === 'P0001' || response.status === 400 || /сессия не найдена|нет доступа/i.test(message)) {
+            setSharedAccess(false)
+            setSharedCode('')
+            localStorage.removeItem('dnd-shared-game-code')
+            if (requestedCode) navigate(`/player?join=${encodeURIComponent(requestedCode)}`, { replace: true })
+          }
+        }
       } finally { pulling = false }
     }
     void pull()
     const timer = window.setInterval(() => { void pull() }, 2500)
     return () => { alive = false; window.clearInterval(timer) }
-  }, [sharedCode])
+  }, [sharedCode, requestedCode, navigate])
 
   useEffect(() => {
     if (!sharedCode) return
@@ -220,7 +233,7 @@ function GameRoom() {
     }
 
     try {
-      const imageUrl = await uploadMedia(file, 'maps', sharedCode || undefined)
+      const imageUrl = await uploadMedia(file, 'maps', sharedAccess ? sharedCode : undefined)
       setMapImage(imageUrl)
       writeAccountValue('dice-and-dragons-active-map', imageUrl)
     } catch (error) { setMapImageError(error instanceof Error ? error.message : 'Не удалось сохранить изображение.') }
