@@ -68,14 +68,20 @@ export async function createSharedGame(title: string) {
     if (!moved.has(source)) moved.set(source, await shareMediaWithGame(source, category, code))
     return moved.get(source)!
   }
-  if (Array.isArray(snapshot['dnd-maps'])) {
-    const maps = snapshot['dnd-maps'] as { image?: string; [key: string]: unknown }[]
-    snapshot['dnd-maps'] = await Promise.all(maps.map(async (map) => map.image ? { ...map, image: await move(map.image, 'maps') } : map))
+  const shareImages = async (value: unknown, key = ''): Promise<unknown> => {
+    if (typeof value === 'string' && (value.startsWith('storage://') || value.startsWith('data:image/'))) {
+      const category = /avatar|portrait|photo|image/i.test(key) ? 'avatars' : 'maps'
+      return move(value, category)
+    }
+    if (Array.isArray(value)) return Promise.all(value.map((entry) => shareImages(entry, key)))
+    if (value && typeof value === 'object') {
+      return Object.fromEntries(await Promise.all(Object.entries(value).map(async ([childKey, childValue]) => [childKey, await shareImages(childValue, childKey)])))
+    }
+    return value
   }
-  const activeMap = snapshot['dice-and-dragons-active-map']
-  if (typeof activeMap === 'string' && activeMap) snapshot['dice-and-dragons-active-map'] = await move(activeMap, 'maps')
-  await requireSupabase().rpc('update_shared_game', { p_code: code, p_snapshot: snapshot }).then(({ error: updateError }) => { if (updateError) throw updateError })
-  applySharedSnapshot(snapshot)
+  const sharedSnapshot = await shareImages(snapshot) as Record<string, unknown>
+  await requireSupabase().rpc('update_shared_game', { p_code: code, p_snapshot: sharedSnapshot }).then(({ error: updateError }) => { if (updateError) throw updateError })
+  applySharedSnapshot(sharedSnapshot)
   return code
 }
 
