@@ -79,6 +79,7 @@ function buildHero(form: { name: string; race: string; characterClass: string; b
 
 function PlayerDashboard() {
   const navigate = useNavigate()
+  const location = useLocation()
   const [heroes, setHeroes] = useState<Hero[]>(() => readJson('dnd-player-characters', []))
   const [activeHeroId, setActiveHeroId] = useState(() => localStorage.getItem('dnd-active-player-character') ?? '')
   const [memberships, setMemberships] = useState<Membership[]>(() => readJson('dnd-player-memberships', []))
